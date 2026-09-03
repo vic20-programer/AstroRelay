@@ -45,11 +45,20 @@ type SharedState = Arc<AppState>;
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMsg {
-    Hello { username: String },
+    /// `user_id`, when present, is the client's own permanent local identity
+    /// (see astro-client's `account` table) — reusing it instead of letting
+    /// the relay assign a fresh random one each time is what makes friending
+    /// and chat history mean anything across reconnects. NOTE: this is not
+    /// authenticated — the relay trusts whatever ID a client claims. Fine
+    /// for a hobby/friends server; add signature-based proof of ownership
+    /// before this is ever exposed somewhere adversarial.
+    Hello { username: String, #[serde(default)] user_id: Option<Uuid> },
     JoinChannel { channel_id: String },
     LeaveChannel { channel_id: String },
     Chat { channel_id: String, content: String },
-    /// Opaque passthrough for WebRTC SDP offers/answers and ICE candidates.
+    /// Opaque passthrough for WebRTC SDP offers/answers and ICE candidates
+    /// (and now also friend-request / friend-accept payloads — the relay
+    /// doesn't care what's inside, it just forwards to `to`).
     Signal { to: Uuid, payload: serde_json::Value },
 }
 
@@ -109,7 +118,7 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
         }
     });
 
-    let user_id = Uuid::new_v4();
+    let mut user_id = Uuid::new_v4();
     let mut username = format!("user-{}", &user_id.to_string()[..8]);
     let mut registered = false;
 
@@ -127,8 +136,11 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
         };
 
         match client_msg {
-            ClientMsg::Hello { username: name } => {
+            ClientMsg::Hello { username: name, user_id: persistent_id } => {
                 username = name;
+                if let Some(id) = persistent_id {
+                    user_id = id;
+                }
                 let peers: Vec<PeerInfo> = state
                     .peers
                     .iter()
