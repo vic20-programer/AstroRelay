@@ -91,6 +91,31 @@ Either way:
   still has no database and no disk-backed state, on Render or anywhere
   else.
 
+## Deploying to Northflank (no sleep, still free)
+
+Render's free tier sleeps after 15 minutes idle; Northflank's free "Sandbox"
+plan doesn't — same Dockerfile, no code changes beyond what's already here.
+
+1. Push this repo to GitHub (skip if it's already there from the Render setup).
+2. In Northflank: **New Project** → **New Service** → connect this repo →
+   build type **Dockerfile**.
+3. Northflank auto-detects the port from the `EXPOSE 7878` line in the
+   Dockerfile and creates a public port for it — just confirm the protocol
+   is set to **HTTP** (WebSocket rides on top of an HTTP/1.1 upgrade, so
+   this is correct, not TCP). If it doesn't auto-detect, add the port
+   manually: `7878`, protocol `HTTP`, public.
+4. Deploy. Northflank gives you a `*.code.run` URL (or attach your own
+   domain) with a TLS cert already issued — connect with `wss://`, same as
+   the Render instructions above.
+5. Northflank may ask for a card the first time to confirm you're not a
+   bot; the Sandbox plan itself stays $0, and there's no sleep/cold-start
+   behavior to work around here.
+
+Unlike Render, Northflank doesn't inject a `$PORT` env var for you — that's
+why the Dockerfile's `EXPOSE 7878` matters here specifically: it's what
+lets Northflank find the right port automatically, using `main.rs`'s own
+7878 fallback rather than an injected one.
+
 
 ## Wire protocol (JSON over the WebSocket)
 
