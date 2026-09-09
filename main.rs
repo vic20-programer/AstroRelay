@@ -61,6 +61,8 @@ enum ClientMsg {
     /// here, the relay trusts the claim rather than verifying authorship.
     EditMessage { channel_id: String, message_id: String, content: String },
     DeleteMessage { channel_id: String, message_id: String },
+    AddReaction { channel_id: String, message_id: String, emoji: String },
+    RemoveReaction { channel_id: String, message_id: String, emoji: String },
     /// Opaque passthrough for WebRTC SDP offers/answers and ICE candidates
     /// (and now also friend-request / friend-accept / avatar payloads — the
     /// relay doesn't care what's inside, it just forwards to `to`).
@@ -77,6 +79,8 @@ enum ServerMsg<'a> {
     Chat { from: Uuid, channel_id: &'a str, content: &'a str, ts: i64 },
     MessageEdited { message_id: &'a str, channel_id: &'a str, content: &'a str },
     MessageDeleted { message_id: &'a str, channel_id: &'a str },
+    ReactionAdded { message_id: &'a str, channel_id: &'a str, emoji: &'a str, user_id: Uuid },
+    ReactionRemoved { message_id: &'a str, channel_id: &'a str, emoji: &'a str, user_id: Uuid },
     Signal { from: Uuid, payload: serde_json::Value },
     Error { message: &'a str },
 }
@@ -236,6 +240,38 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                     let out = ServerMsg::MessageDeleted {
                         message_id: &message_id,
                         channel_id: &channel_id,
+                    };
+                    let payload = serde_json::to_string(&out).unwrap();
+                    for member in members.iter() {
+                        if let Some(peer) = state.peers.get(&member) {
+                            let _ = peer.tx.send(WsMessage::Text(payload.clone()));
+                        }
+                    }
+                }
+            }
+            ClientMsg::AddReaction { channel_id, message_id, emoji } => {
+                if let Some(members) = state.channels.get(&channel_id) {
+                    let out = ServerMsg::ReactionAdded {
+                        message_id: &message_id,
+                        channel_id: &channel_id,
+                        emoji: &emoji,
+                        user_id,
+                    };
+                    let payload = serde_json::to_string(&out).unwrap();
+                    for member in members.iter() {
+                        if let Some(peer) = state.peers.get(&member) {
+                            let _ = peer.tx.send(WsMessage::Text(payload.clone()));
+                        }
+                    }
+                }
+            }
+            ClientMsg::RemoveReaction { channel_id, message_id, emoji } => {
+                if let Some(members) = state.channels.get(&channel_id) {
+                    let out = ServerMsg::ReactionRemoved {
+                        message_id: &message_id,
+                        channel_id: &channel_id,
+                        emoji: &emoji,
+                        user_id,
                     };
                     let payload = serde_json::to_string(&out).unwrap();
                     for member in members.iter() {
