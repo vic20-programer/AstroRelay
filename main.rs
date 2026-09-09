@@ -56,9 +56,14 @@ enum ClientMsg {
     JoinChannel { channel_id: String },
     LeaveChannel { channel_id: String },
     Chat { channel_id: String, content: String },
+    /// Edit/delete a message you authored — broadcast to every current
+    /// member of the channel, the same as `Chat`. Like everything else
+    /// here, the relay trusts the claim rather than verifying authorship.
+    EditMessage { channel_id: String, message_id: String, content: String },
+    DeleteMessage { channel_id: String, message_id: String },
     /// Opaque passthrough for WebRTC SDP offers/answers and ICE candidates
-    /// (and now also friend-request / friend-accept payloads — the relay
-    /// doesn't care what's inside, it just forwards to `to`).
+    /// (and now also friend-request / friend-accept / avatar payloads — the
+    /// relay doesn't care what's inside, it just forwards to `to`).
     Signal { to: Uuid, payload: serde_json::Value },
 }
 
@@ -70,6 +75,8 @@ enum ServerMsg<'a> {
     PeerLeft { user_id: Uuid },
     ChannelJoined { channel_id: &'a str, members: Vec<Uuid> },
     Chat { from: Uuid, channel_id: &'a str, content: &'a str, ts: i64 },
+    MessageEdited { message_id: &'a str, channel_id: &'a str, content: &'a str },
+    MessageDeleted { message_id: &'a str, channel_id: &'a str },
     Signal { from: Uuid, payload: serde_json::Value },
     Error { message: &'a str },
 }
@@ -207,6 +214,35 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
                     }
                 } else {
                     send_err(&tx, "not a member of that channel");
+                }
+            }
+            ClientMsg::EditMessage { channel_id, message_id, content } => {
+                if let Some(members) = state.channels.get(&channel_id) {
+                    let out = ServerMsg::MessageEdited {
+                        message_id: &message_id,
+                        channel_id: &channel_id,
+                        content: &content,
+                    };
+                    let payload = serde_json::to_string(&out).unwrap();
+                    for member in members.iter() {
+                        if let Some(peer) = state.peers.get(&member) {
+                            let _ = peer.tx.send(WsMessage::Text(payload.clone()));
+                        }
+                    }
+                }
+            }
+            ClientMsg::DeleteMessage { channel_id, message_id } => {
+                if let Some(members) = state.channels.get(&channel_id) {
+                    let out = ServerMsg::MessageDeleted {
+                        message_id: &message_id,
+                        channel_id: &channel_id,
+                    };
+                    let payload = serde_json::to_string(&out).unwrap();
+                    for member in members.iter() {
+                        if let Some(peer) = state.peers.get(&member) {
+                            let _ = peer.tx.send(WsMessage::Text(payload.clone()));
+                        }
+                    }
                 }
             }
             ClientMsg::Signal { to, payload } => {

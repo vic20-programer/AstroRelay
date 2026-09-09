@@ -124,6 +124,8 @@ Client → server:
 {"type": "hello", "username": "Mikey"}
 {"type": "join_channel", "channel_id": "general"}
 {"type": "chat", "channel_id": "general", "content": "hey"}
+{"type": "edit_message", "channel_id": "general", "message_id": "<id>", "content": "hey there"}
+{"type": "delete_message", "channel_id": "general", "message_id": "<id>"}
 {"type": "signal", "to": "<peer-uuid>", "payload": { "sdp": "...", "kind": "offer" }}
 ```
 
@@ -132,8 +134,15 @@ Server → client:
 {"type": "welcome", "user_id": "...", "peers": [...]}
 {"type": "peer_joined", "user_id": "...", "username": "..."}
 {"type": "chat", "from": "...", "channel_id": "general", "content": "hey", "ts": 1234567890}
+{"type": "message_edited", "message_id": "<id>", "channel_id": "general", "content": "hey there"}
+{"type": "message_deleted", "message_id": "<id>", "channel_id": "general"}
 {"type": "signal", "from": "...", "payload": {...}}
 ```
+
+`edit_message`/`delete_message` broadcast to every current member of the
+channel, same as `chat` — the relay doesn't verify you actually authored
+the message you're editing, consistent with the rest of the trust model
+here (see the `Hello` doc comment in `main.rs`).
 
 `signal` payloads are opaque JSON — the relay never inspects them, it just
 forwards to the named peer. That's where your WebRTC offer/answer/ICE
