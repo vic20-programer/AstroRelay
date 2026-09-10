@@ -164,3 +164,43 @@ candidate exchange rides.
    video/display-capture track.
 
 Want me to scaffold the Tauri client next (steps 1–2)?
+
+## Message IDs are now sender-assigned
+
+`chat` gained a `message_id` field, set by the sending client instead of
+being generated independently by every client that happens to save a copy.
+This was the actual cause of reactions (and eventually edit/delete) not
+matching up between clients: previously, your client and your friend's
+client each invented their own random id for "the same" message when they
+saved it locally, so a reaction broadcast referencing your id never matched
+anything in your friend's local database. The relay still doesn't generate
+or validate this id — it just passes it through, same trust model as
+everything else here.
+
+## Update hosting
+
+The relay now also hosts Astro's auto-update files — no GitHub, no public
+listing anywhere, just static files served from the same private server and
+URL your app already connects to for chat.
+
+- **`GET /update/*`** — plain static file serving (via `tower-http`'s
+  `ServeDir`) of whatever's in the `updates/` directory (configurable via
+  `UPDATES_DIR`, defaults to `./updates` next to wherever the relay runs).
+  This is what `latest.json` and each installer/`.sig` file are served from.
+- **`POST /publish/:filename`** — how new files get into that directory.
+  Requires `Authorization: Bearer <UPDATE_UPLOAD_TOKEN>` matching an env
+  var you set when deploying the relay. **Publishing is entirely disabled
+  if `UPDATE_UPLOAD_TOKEN` isn't set** — there's no "open" fallback mode.
+  Saves the raw request body as-is to `updates/<filename>`; rejects
+  filenames containing `/`, `\`, or `..` (no path traversal outside the
+  updates directory).
+
+Use `scripts/publish-update.mjs` in the astro-client repo to build the
+right `latest.json` and upload everything in one step — see the client
+README's "Setting up auto-updates" section for the full flow.
+
+If the relay runs somewhere with ephemeral storage that wipes on every
+redeploy (e.g. Render's default disk), the `updates/` directory disappears
+too — just re-run the publish script after each redeploy; it's a couple of
+seconds regardless. A host with a persistent disk (your home server,
+Northflank, or Render with a persistent disk add-on) avoids that entirely.
