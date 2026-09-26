@@ -25,7 +25,14 @@ use axum::{
 use dashmap::{DashMap, DashSet};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicI64, Ordering},
+        Arc,
+    },
+};
 use tokio::sync::mpsc;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
@@ -48,6 +55,35 @@ struct AppState {
     /// Required bearer token for /publish/:filename. Publishing is disabled
     /// entirely (not "open") if this isn't set — see main().
     upload_token: Option<String>,
+    /// Last timestamp handed out to a chat message. Every client sorts its
+    /// history by the `ts` the relay stamps on, so this has to be ONE clock
+    /// (not each sender's own, which is what put one person's messages above
+    /// everyone else's when their PC clock was off) and it has to be strictly
+    /// increasing (so two messages in the same millisecond still have a
+    /// defined order that's the same on every client).
+    last_chat_ts: AtomicI64,
+}
+
+impl AppState {
+    /// Wall-clock time, except never the same value twice and never going
+    /// backwards — if two messages land in one millisecond, or the host's
+    /// clock steps back, the next message just gets `previous + 1`.
+    fn next_chat_ts(&self) -> i64 {
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut prev = self.last_chat_ts.load(Ordering::Relaxed);
+        loop {
+            let candidate = if now > prev { now } else { prev + 1 };
+            match self.last_chat_ts.compare_exchange_weak(
+                prev,
+                candidate,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return candidate,
+                Err(actual) => prev = actual,
+            }
+        }
+    }
 }
 
 type SharedState = Arc<AppState>;
@@ -129,6 +165,7 @@ async fn main() {
         peer_channels: DashMap::new(),
         updates_dir: updates_dir.clone(),
         upload_token,
+        last_chat_ts: AtomicI64::new(0),
     });
 
     let app = Router::new()
@@ -282,7 +319,7 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
             }
             ClientMsg::Chat { channel_id, content, message_id } => {
                 if let Some(members) = state.channels.get(&channel_id) {
-                    let ts = chrono::Utc::now().timestamp_millis();
+                    let ts = state.next_chat_ts();
                     let out = ServerMsg::Chat {
                         message_id: &message_id,
                         from: user_id,
